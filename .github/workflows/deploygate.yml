@@ -1,0 +1,59 @@
+name: DeployGate
+
+on:
+  workflow_dispatch:
+    inputs:
+      distribution_name:
+        description: DeployGate distribution page name
+        required: false
+        default: Development
+      release_note:
+        description: Release note shown on DeployGate
+        required: false
+        default: Manual GitHub Actions upload
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: deploygate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    name: Android debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: deploygate
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.22.1"
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate Drift code
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Upload to DeployGate
+        uses: DeployGate/deploygate-upload-github-action@036a7d47e1946da17d9758bd4d2024f59702ff48 # v1.1.1
+        with:
+          api_token: ${{ secrets.DEPLOYGATE_API_TOKEN }}
+          owner_name: ${{ secrets.DEPLOYGATE_OWNER_NAME }}
+          file_path: build/app/outputs/flutter-apk/app-debug.apk
+          message: ${{ github.ref_name }} (${{ github.sha }})
+          distribution_name: ${{ inputs.distribution_name }}
+          release_note: ${{ inputs.release_note }}
