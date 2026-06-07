@@ -42,6 +42,13 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Install Android build prerequisites
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null
+          "$SDKMANAGER" "platforms;android-35" "ndk;26.1.10909125" "cmake;3.22.1"
+
       - name: Generate Drift code
         run: dart run build_runner build --delete-conflicting-outputs
 
