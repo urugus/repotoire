@@ -49,7 +49,7 @@ jobs:
         run: flutter build apk --debug
 
       - name: Upload to DeployGate
-        uses: DeployGate/deploygate-upload-github-action@036a7d47e1946da17d9758bd4d2024f59702ff48 # v1.1.1
+        uses: DeployGate/deploygate-upload-github-action@35490fcb3220c7f73f0e66e57441c5dbeab43c12 # v1.1.2
         with:
           api_token: ${{ secrets.DEPLOYGATE_API_TOKEN }}
           owner_name: ${{ secrets.DEPLOYGATE_OWNER_NAME }}
