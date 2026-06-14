@@ -73,46 +73,68 @@ class LibraryScreen extends ConsumerWidget {
     );
     final keyController = TextEditingController();
     final tagsController = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('PDFを取り込む'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: titleController,
-                decoration: const InputDecoration(labelText: '楽譜名'),
-                autofocus: true,
+    late final String title;
+    String? key;
+    late final List<String> tags;
+
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('PDFを取り込む'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: titleController,
+                    decoration: const InputDecoration(labelText: '楽譜名'),
+                    autofocus: true,
+                  ),
+                  TextField(
+                    controller: keyController,
+                    decoration: const InputDecoration(labelText: 'キー'),
+                  ),
+                  TextField(
+                    controller: tagsController,
+                    decoration: const InputDecoration(
+                      labelText: 'タグ',
+                      hintText: 'カンマ区切り',
+                    ),
+                  ),
+                ],
               ),
-              TextField(
-                controller: keyController,
-                decoration: const InputDecoration(labelText: 'キー'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('キャンセル'),
               ),
-              TextField(
-                controller: tagsController,
-                decoration: const InputDecoration(
-                  labelText: 'タグ',
-                  hintText: 'カンマ区切り',
-                ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('取り込む'),
               ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('キャンセル'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('取り込む'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true || !context.mounted) {
+          );
+        },
+      );
+      if (confirmed != true || !context.mounted) {
+        return;
+      }
+
+      final titleText = titleController.text.trim();
+      final keyText = keyController.text.trim();
+      title = titleText.isEmpty ? result.files.single.name : titleText;
+      key = keyText.isEmpty ? null : keyText;
+      tags = _parseTags(tagsController.text);
+    } finally {
+      titleController.dispose();
+      keyController.dispose();
+      tagsController.dispose();
+    }
+
+    if (!context.mounted) {
       return;
     }
 
@@ -121,13 +143,9 @@ class LibraryScreen extends ConsumerWidget {
       final importResult = await repository.importScore(
         ImportScoreRequest(
           pdfFile: File(result.files.single.path!),
-          title: titleController.text.trim().isEmpty
-              ? result.files.single.name
-              : titleController.text.trim(),
-          key: keyController.text.trim().isEmpty
-              ? null
-              : keyController.text.trim(),
-          tags: _parseTags(tagsController.text),
+          title: title,
+          key: key,
+          tags: tags,
         ),
       );
       if (!context.mounted) {
