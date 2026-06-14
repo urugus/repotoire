@@ -163,14 +163,6 @@ class LibraryScreen extends ConsumerWidget {
       );
     }
   }
-
-  List<String> _parseTags(String input) {
-    return input
-        .split(',')
-        .map((tag) => tag.trim())
-        .where((tag) => tag.isNotEmpty)
-        .toList(growable: false);
-  }
 }
 
 class _FilterFields extends ConsumerStatefulWidget {
@@ -272,12 +264,15 @@ class _ScoreList extends ConsumerWidget {
           title: Text(item.title),
           subtitle: Text(_subtitleFor(item)),
           trailing: PopupMenuButton<String>(
-            onSelected: (value) {
-              if (value == 'delete') {
-                ref.read(libraryRepositoryProvider).logicalDelete(item.id);
+            onSelected: (value) async {
+              if (value == 'edit') {
+                await _editScore(context, ref, item);
+              } else if (value == 'delete') {
+                await _deleteScore(context, ref, item);
               }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(value: 'edit', child: Text('編集')),
               PopupMenuItem(value: 'delete', child: Text('削除')),
             ],
           ),
@@ -295,6 +290,121 @@ class _ScoreList extends ConsumerWidget {
     );
   }
 
+  Future<void> _editScore(
+    BuildContext context,
+    WidgetRef ref,
+    ScoreListItem item,
+  ) async {
+    final titleController = TextEditingController(text: item.title);
+    final keyController = TextEditingController(text: item.key ?? '');
+    final tagsController = TextEditingController(text: item.tags.join(', '));
+
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('楽譜情報を編集'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: titleController,
+                    decoration: const InputDecoration(labelText: '楽譜名'),
+                    autofocus: true,
+                  ),
+                  TextField(
+                    controller: keyController,
+                    decoration: const InputDecoration(labelText: 'キー'),
+                  ),
+                  TextField(
+                    controller: tagsController,
+                    decoration: const InputDecoration(
+                      labelText: 'タグ',
+                      hintText: 'カンマ区切り',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('キャンセル'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('保存'),
+              ),
+            ],
+          );
+        },
+      );
+      if (confirmed != true || !context.mounted) {
+        return;
+      }
+
+      final title = titleController.text.trim();
+      if (title.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('楽譜名を入力してください')),
+        );
+        return;
+      }
+
+      final key = keyController.text.trim();
+      await ref.read(libraryRepositoryProvider).updateMetadata(
+            UpdateScoreMetadataRequest(
+              scoreId: item.id,
+              title: title,
+              key: key.isEmpty ? null : key,
+              tags: _parseTags(tagsController.text),
+            ),
+          );
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('楽譜情報を保存しました')),
+      );
+    } catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString())),
+      );
+    } finally {
+      titleController.dispose();
+      keyController.dispose();
+      tagsController.dispose();
+    }
+  }
+
+  Future<void> _deleteScore(
+    BuildContext context,
+    WidgetRef ref,
+    ScoreListItem item,
+  ) async {
+    try {
+      await ref.read(libraryRepositoryProvider).logicalDelete(item.id);
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${item.title}を削除しました')),
+      );
+    } catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString())),
+      );
+    }
+  }
+
   String _subtitleFor(ScoreListItem item) {
     if (item.invalidReason != null) {
       return item.invalidReason!;
@@ -305,6 +415,14 @@ class _ScoreList extends ConsumerWidget {
     ];
     return parts.isEmpty ? 'PDF' : parts.join(' / ');
   }
+}
+
+List<String> _parseTags(String input) {
+  return input
+      .split(',')
+      .map((tag) => tag.trim())
+      .where((tag) => tag.isNotEmpty)
+      .toList(growable: false);
 }
 
 class _ErrorState extends StatelessWidget {

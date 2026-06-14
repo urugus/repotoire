@@ -62,7 +62,6 @@ class ScoreSemanticMerger {
         conflicts: conflicts,
       ),
       deletedAt: mergedDeletedAt,
-      clearDeletedAt: mergedDeletedAt == null,
       extra: {
         ...base.extra,
         ...remote.extra,
@@ -80,7 +79,8 @@ class ScoreSemanticMerger {
         ),
       );
     }
-    if (base.createdAt != local.createdAt || base.createdAt != remote.createdAt) {
+    if (base.createdAt != local.createdAt ||
+        base.createdAt != remote.createdAt) {
       conflicts.add(
         MetadataConflict(
           field: ConflictField.immutable,
@@ -230,9 +230,8 @@ class ScoreSemanticMerger {
 
     final localEditedBesidesDelete = _editedBesidesDelete(base, local);
     final remoteEditedBesidesDelete = _editedBesidesDelete(base, remote);
-    final deleteEditConflict =
-        (localChanged && remoteEditedBesidesDelete) ||
-            (remoteChanged && localEditedBesidesDelete);
+    final deleteEditConflict = (localChanged && remoteEditedBesidesDelete) ||
+        (remoteChanged && localEditedBesidesDelete);
 
     if (deleteEditConflict || (localChanged && remoteChanged)) {
       conflicts.add(
@@ -249,8 +248,17 @@ class ScoreSemanticMerger {
   }
 
   bool _editedBesidesDelete(Score base, Score changed) {
-    final withoutDeleteBase = base.copyWith(clearDeletedAt: true);
-    final withoutDeleteChanged = changed.copyWith(clearDeletedAt: true);
+    final withoutDeleteBase = _withoutDeleteAndValidationState(base);
+    final withoutDeleteChanged = _withoutDeleteAndValidationState(changed);
     return withoutDeleteBase != withoutDeleteChanged;
+  }
+
+  Score _withoutDeleteAndValidationState(Score score) {
+    // Validity is local validation state, not user-editable sync metadata.
+    return score.copyWith(
+      deletedAt: null,
+      validity: ScoreValidity.valid,
+      invalidReason: null,
+    );
   }
 }

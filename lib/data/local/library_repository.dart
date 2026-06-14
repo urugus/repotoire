@@ -9,6 +9,7 @@ import 'package:ulid/ulid.dart';
 import '../../domain/entities.dart' as domain;
 import '../../domain/import_policy.dart';
 import '../../domain/text_normalizer.dart';
+import '../../sync/local_operation_queue.dart';
 import 'app_database.dart';
 
 class ScoreListItem {
@@ -47,6 +48,20 @@ class ImportScoreRequest {
   final List<String> tags;
 }
 
+class UpdateScoreMetadataRequest {
+  const UpdateScoreMetadataRequest({
+    required this.scoreId,
+    required this.title,
+    this.key,
+    this.tags = const [],
+  });
+
+  final String scoreId;
+  final String title;
+  final String? key;
+  final List<String> tags;
+}
+
 class ImportScoreResult {
   const ImportScoreResult({
     required this.scoreId,
@@ -62,13 +77,16 @@ class ImportScoreResult {
 class LibraryRepository {
   LibraryRepository({
     required AppDatabase database,
+    LocalOperationQueue? operationQueue,
     ImportPolicy importPolicy = const ImportPolicy(),
     TextNormalizer textNormalizer = const TextNormalizer(),
   })  : _database = database,
+        _operationQueue = operationQueue,
         _importPolicy = importPolicy,
         _textNormalizer = textNormalizer;
 
   final AppDatabase _database;
+  final LocalOperationQueue? _operationQueue;
   final ImportPolicy _importPolicy;
   final TextNormalizer _textNormalizer;
 
@@ -206,6 +224,19 @@ class LibraryRepository {
               ),
             );
       }
+      await _operationQueue?.enqueue(
+        type: domain.LocalOperationType.addScore,
+        baseHeadSha: null,
+        payload: {
+          'score_id': scoreId,
+          'version_id': versionId,
+          'title': request.title,
+          'key': request.key,
+          'tags': _cleanTags(request.tags),
+          'local_path': copiedPdf.path,
+          'page_count': pageCount ?? 0,
+        },
+      );
     });
 
     return ImportScoreResult(
@@ -232,10 +263,66 @@ class LibraryRepository {
     return file.existsSync() ? file : null;
   }
 
+  Future<void> updateMetadata(UpdateScoreMetadataRequest request) async {
+    final cleanedTags = _cleanTags(request.tags);
+    final key = request.key?.trim();
+    await _database.transaction(() async {
+      final updated = await (_database.update(_database.scores)
+            ..where((row) => row.id.equals(request.scoreId)))
+          .write(
+        ScoresCompanion(
+          title: Value(request.title),
+          key: Value(key == null || key.isEmpty ? null : key),
+          titleNormalized: Value(_textNormalizer.normalize(request.title)),
+        ),
+      );
+      if (updated == 0) {
+        throw StateError('楽譜が見つかりません');
+      }
+
+      await (_database.delete(_database.tags)
+            ..where((row) => row.scoreId.equals(request.scoreId)))
+          .go();
+      for (final tag in cleanedTags) {
+        await _database.into(_database.tags).insertOnConflictUpdate(
+              TagsCompanion.insert(
+                scoreId: request.scoreId,
+                tag: tag,
+                tagNormalized: _textNormalizer.normalize(tag),
+              ),
+            );
+      }
+      await _operationQueue?.enqueue(
+        type: domain.LocalOperationType.updateMeta,
+        baseHeadSha: null,
+        payload: {
+          'score_id': request.scoreId,
+          'title': request.title,
+          'key': key == null || key.isEmpty ? null : key,
+          'tags': cleanedTags,
+        },
+      );
+    });
+  }
+
   Future<void> logicalDelete(String scoreId) async {
-    await (_database.update(_database.scores)
-          ..where((row) => row.id.equals(scoreId)))
-        .write(ScoresCompanion(deletedAt: Value(DateTime.now().toUtc())));
+    final deletedAt = DateTime.now().toUtc();
+    await _database.transaction(() async {
+      final updated = await (_database.update(_database.scores)
+            ..where((row) => row.id.equals(scoreId)))
+          .write(ScoresCompanion(deletedAt: Value(deletedAt)));
+      if (updated == 0) {
+        throw StateError('楽譜が見つかりません');
+      }
+      await _operationQueue?.enqueue(
+        type: domain.LocalOperationType.deleteScore,
+        baseHeadSha: null,
+        payload: {
+          'score_id': scoreId,
+          'deleted_at': deletedAt.toIso8601String(),
+        },
+      );
+    });
   }
 
   Future<Directory> _scoreStorageDirectory(String scoreId) async {
