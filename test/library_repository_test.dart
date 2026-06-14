@@ -3,6 +3,8 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:repotoire/data/local/app_database.dart';
 import 'package:repotoire/data/local/library_repository.dart';
+import 'package:repotoire/domain/entities.dart';
+import 'package:repotoire/sync/local_operation_queue.dart';
 
 void main() {
   late AppDatabase database;
@@ -55,6 +57,58 @@ void main() {
 
     expect(visible, isEmpty);
     expect(withDeleted.single.title, 'Nocturne');
+  });
+
+  test('updates score metadata and records a local operation', () async {
+    final operationQueue = LocalOperationQueue(database: database);
+    repository = LibraryRepository(
+      database: database,
+      operationQueue: operationQueue,
+    );
+    await _insertScore(
+      database,
+      id: 'score-a',
+      title: 'Nocturne',
+      key: 'Es-dur',
+      tags: const ['practice'],
+    );
+
+    await repository.updateMetadata(
+      const UpdateScoreMetadataRequest(
+        scoreId: 'score-a',
+        title: 'Nocturne Op. 9 No. 2',
+        key: 'F-dur',
+        tags: ['piano', 'recital', 'piano'],
+      ),
+    );
+
+    final scores = await repository.watchScores().first;
+    final operations = await operationQueue.watchPending().first;
+
+    expect(scores.single.title, 'Nocturne Op. 9 No. 2');
+    expect(scores.single.key, 'F-dur');
+    expect(scores.single.tags, ['piano', 'recital']);
+    expect(operations.single.type, LocalOperationType.updateMeta);
+    expect(operations.single.payload['score_id'], 'score-a');
+    expect(operations.single.payload['tags'], ['piano', 'recital']);
+  });
+
+  test('logical delete records a local operation', () async {
+    final operationQueue = LocalOperationQueue(database: database);
+    repository = LibraryRepository(
+      database: database,
+      operationQueue: operationQueue,
+    );
+    await _insertScore(database, id: 'score-a', title: 'Nocturne');
+
+    await repository.logicalDelete('score-a');
+
+    final scores = await repository.watchScores(includeDeleted: true).first;
+    final operations = await operationQueue.watchPending().first;
+
+    expect(scores.single.deletedAt, isA<DateTime>());
+    expect(operations.single.type, LocalOperationType.deleteScore);
+    expect(operations.single.payload['score_id'], 'score-a');
   });
 }
 
