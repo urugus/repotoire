@@ -17,6 +17,7 @@ class ScoreListItem {
     required this.title,
     required this.currentVersion,
     required this.validity,
+    this.tags = const [],
     this.key,
     this.deletedAt,
     this.invalidReason,
@@ -26,6 +27,7 @@ class ScoreListItem {
   final String title;
   final String currentVersion;
   final domain.ScoreValidity validity;
+  final List<String> tags;
   final String? key;
   final DateTime? deletedAt;
   final String? invalidReason;
@@ -77,35 +79,78 @@ class LibraryRepository {
     bool includeDeleted = false,
   }) {
     final normalizedQuery = _textNormalizer.normalize(query);
-    final select = _database.select(_database.scores);
+    final normalizedTag = _textNormalizer.normalize(tag ?? '');
+    final normalizedKey = key?.trim();
+    final whereClauses = <String>[];
+    final variables = <Variable>[];
+
     if (!includeDeleted) {
-      select.where((score) => score.deletedAt.isNull());
+      whereClauses.add('s.deleted_at IS NULL');
     }
     if (normalizedQuery.isNotEmpty) {
-      select.where(
-        (score) => score.titleNormalized.contains(normalizedQuery),
+      whereClauses.add("s.title_normalized LIKE '%' || ? || '%'");
+      variables.add(Variable<String>(normalizedQuery));
+    }
+    if (normalizedKey != null && normalizedKey.isNotEmpty) {
+      whereClauses.add('s.key = ?');
+      variables.add(Variable<String>(normalizedKey));
+    }
+    if (normalizedTag.isNotEmpty) {
+      whereClauses.add(
+        '''
+        EXISTS (
+          SELECT 1
+          FROM tags tf
+          WHERE tf.score_id = s.id
+            AND tf.tag_normalized = ?
+        )
+        ''',
       );
+      variables.add(Variable<String>(normalizedTag));
     }
-    if (key != null && key.isNotEmpty) {
-      select.where((score) => score.key.equals(key));
-    }
-    select.orderBy([
-      (score) => OrderingTerm.asc(score.titleNormalized),
-      (score) => OrderingTerm.asc(score.createdAt),
-    ]);
 
-    return select.watch().map((rows) {
+    final whereSql =
+        whereClauses.isEmpty ? '' : 'WHERE ${whereClauses.join(' AND ')}';
+
+    return _database
+        .customSelect(
+          '''
+          SELECT
+            s.id,
+            s.title,
+            s.key AS score_key,
+            s.current_version,
+            s.deleted_at,
+            s.validity,
+            s.invalid_reason,
+            group_concat(t.tag, char(31)) AS tags
+          FROM scores s
+          LEFT JOIN tags t ON t.score_id = s.id
+          $whereSql
+          GROUP BY s.id
+          ORDER BY s.title_normalized ASC, s.created_at ASC
+          ''',
+          variables: variables,
+          readsFrom: {_database.scores, _database.tags},
+        )
+        .watch()
+        .map((rows) {
       return rows.map((row) {
+        final tags = row.readNullable<String>('tags');
         return ScoreListItem(
-          id: row.id,
-          title: row.title,
-          key: row.key,
-          currentVersion: row.currentVersion,
-          deletedAt: row.deletedAt,
-          validity: row.validity == 'invalid'
+          id: row.read<String>('id'),
+          title: row.read<String>('title'),
+          key: row.readNullable<String>('score_key'),
+          currentVersion: row.read<String>('current_version'),
+          deletedAt: row.readNullable<DateTime>('deleted_at'),
+          tags: tags == null
+              ? const []
+              : (tags.split(String.fromCharCode(31))..sort())
+                  .toList(growable: false),
+          validity: row.read<String>('validity') == 'invalid'
               ? domain.ScoreValidity.invalid
               : domain.ScoreValidity.valid,
-          invalidReason: row.invalidReason,
+          invalidReason: row.readNullable<String>('invalid_reason'),
         );
       }).toList(growable: false);
     });
@@ -126,8 +171,9 @@ class LibraryRepository {
     final copiedPdf = File(p.join(storageDir.path, '$versionId.pdf'));
     await request.pdfFile.copy(copiedPdf.path);
     final pageCount = await _readPageCount(copiedPdf);
-    final validity =
-        pageCount == null ? domain.ScoreValidity.invalid : domain.ScoreValidity.valid;
+    final validity = pageCount == null
+        ? domain.ScoreValidity.invalid
+        : domain.ScoreValidity.valid;
 
     await _database.transaction(() async {
       await _database.into(_database.scores).insert(
@@ -151,7 +197,7 @@ class LibraryRepository {
               addedAt: now,
             ),
           );
-      for (final tag in request.tags) {
+      for (final tag in _cleanTags(request.tags)) {
         await _database.into(_database.tags).insertOnConflictUpdate(
               TagsCompanion.insert(
                 scoreId: scoreId,
@@ -187,7 +233,8 @@ class LibraryRepository {
   }
 
   Future<void> logicalDelete(String scoreId) async {
-    await (_database.update(_database.scores)..where((row) => row.id.equals(scoreId)))
+    await (_database.update(_database.scores)
+          ..where((row) => row.id.equals(scoreId)))
         .write(ScoresCompanion(deletedAt: Value(DateTime.now().toUtc())));
   }
 
@@ -207,5 +254,17 @@ class LibraryRepository {
     } catch (_) {
       return null;
     }
+  }
+
+  List<String> _cleanTags(List<String> tags) {
+    final byNormalized = <String, String>{};
+    for (final tag in tags) {
+      final trimmed = tag.trim();
+      final normalized = _textNormalizer.normalize(trimmed);
+      if (normalized.isNotEmpty) {
+        byNormalized[normalized] = trimmed;
+      }
+    }
+    return byNormalized.values.toList(growable: false);
   }
 }

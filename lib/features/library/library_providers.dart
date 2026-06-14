@@ -15,8 +15,18 @@ final libraryRepositoryProvider = Provider<LibraryRepository>((ref) {
 
 final libraryQueryProvider = StateProvider<String>((ref) => '');
 
+final libraryKeyFilterProvider = StateProvider<String>((ref) => '');
+
+final libraryTagFilterProvider = StateProvider<String>((ref) => '');
+
 final libraryScoresProvider = StreamProvider<List<ScoreListItem>>((ref) {
   final repository = ref.watch(libraryRepositoryProvider);
   final query = ref.watch(libraryQueryProvider);
-  return repository.watchScores(query: query);
+  final key = ref.watch(libraryKeyFilterProvider).trim();
+  final tag = ref.watch(libraryTagFilterProvider).trim();
+  return repository.watchScores(
+    query: query,
+    key: key.isEmpty ? null : key,
+    tag: tag.isEmpty ? null : tag,
+  );
 });
