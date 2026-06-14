@@ -264,11 +264,11 @@ class _ScoreList extends ConsumerWidget {
           title: Text(item.title),
           subtitle: Text(_subtitleFor(item)),
           trailing: PopupMenuButton<String>(
-            onSelected: (value) {
+            onSelected: (value) async {
               if (value == 'edit') {
-                _editScore(context, ref, item);
+                await _editScore(context, ref, item);
               } else if (value == 'delete') {
-                _deleteScore(context, ref, item);
+                await _deleteScore(context, ref, item);
               }
             },
             itemBuilder: (context) => const [
