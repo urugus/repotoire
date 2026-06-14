@@ -1,5 +1,7 @@
 import 'package:collection/collection.dart';
 
+const Object _unset = Object();
+
 enum ScoreValidity { valid, invalid }
 
 enum LocalOperationType { addScore, updateMeta, deleteScore, addVersion }
@@ -115,29 +117,41 @@ class Score {
     String? title,
     List<String>? artistIds,
     List<String>? tags,
-    String? key,
+    // Sentinel-backed nullable fields distinguish omitted values from
+    // explicit null updates.
+    Object? key = _unset,
     String? currentVersion,
     List<PageSequenceEntry>? pageSequence,
-    DateTime? deletedAt,
+    Object? deletedAt = _unset,
     bool clearDeletedAt = false,
     DateTime? createdAt,
     ScoreValidity? validity,
-    String? invalidReason,
+    Object? invalidReason = _unset,
     Map<String, Object?>? extra,
   }) {
+    assert(
+      !clearDeletedAt || identical(deletedAt, _unset),
+      'Use either clearDeletedAt or deletedAt, not both.',
+    );
     return Score(
       schemaVersion: schemaVersion ?? this.schemaVersion,
       id: id ?? this.id,
       title: title ?? this.title,
       artistIds: artistIds ?? this.artistIds,
       tags: tags ?? this.tags,
-      key: key ?? this.key,
+      key: identical(key, _unset) ? this.key : key as String?,
       currentVersion: currentVersion ?? this.currentVersion,
       pageSequence: pageSequence ?? this.pageSequence,
-      deletedAt: clearDeletedAt ? null : deletedAt ?? this.deletedAt,
+      deletedAt: clearDeletedAt
+          ? null
+          : identical(deletedAt, _unset)
+              ? this.deletedAt
+              : deletedAt as DateTime?,
       createdAt: createdAt ?? this.createdAt,
       validity: validity ?? this.validity,
-      invalidReason: invalidReason ?? this.invalidReason,
+      invalidReason: identical(invalidReason, _unset)
+          ? this.invalidReason
+          : invalidReason as String?,
       extra: extra ?? this.extra,
     );
   }
@@ -157,7 +171,10 @@ class Score {
           pageSequence.map((entry) => entry.toJson()).toList(),
         ) &&
         other.deletedAt == deletedAt &&
-        other.createdAt == createdAt;
+        other.createdAt == createdAt &&
+        other.validity == validity &&
+        other.invalidReason == invalidReason &&
+        const DeepCollectionEquality().equals(other.extra, extra);
   }
 
   @override
@@ -169,9 +186,14 @@ class Score {
         Object.hashAll(tags),
         key,
         currentVersion,
-        Object.hashAll(pageSequence.map((entry) => entry.page)),
+        const DeepCollectionEquality().hash(
+          pageSequence.map((entry) => entry.toJson()).toList(),
+        ),
         deletedAt,
         createdAt,
+        validity,
+        invalidReason,
+        const DeepCollectionEquality().hash(extra),
       );
 }
 
