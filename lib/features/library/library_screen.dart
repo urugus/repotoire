@@ -28,12 +28,18 @@ class LibraryScreen extends ConsumerWidget {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: SearchBar(
-              hintText: '楽譜名で検索',
-              leading: const Icon(Icons.search),
-              onChanged: (value) =>
-                  ref.read(libraryQueryProvider.notifier).state = value,
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Column(
+              children: [
+                SearchBar(
+                  hintText: '楽譜名で検索',
+                  leading: const Icon(Icons.search),
+                  onChanged: (value) =>
+                      ref.read(libraryQueryProvider.notifier).state = value,
+                ),
+                const SizedBox(height: 8),
+                const _FilterFields(),
+              ],
             ),
           ),
           Expanded(
@@ -62,32 +68,73 @@ class LibraryScreen extends ConsumerWidget {
     }
 
     final titleController = TextEditingController(
-      text: result.files.single.name.replaceFirst(RegExp(r'\.pdf$', caseSensitive: false), ''),
+      text: result.files.single.name
+          .replaceFirst(RegExp(r'\.pdf$', caseSensitive: false), ''),
     );
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('PDFを取り込む'),
-          content: TextField(
-            controller: titleController,
-            decoration: const InputDecoration(labelText: '楽譜名'),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('キャンセル'),
+    final keyController = TextEditingController();
+    final tagsController = TextEditingController();
+    late final String title;
+    String? key;
+    late final List<String> tags;
+
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('PDFを取り込む'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: titleController,
+                    decoration: const InputDecoration(labelText: '楽譜名'),
+                    autofocus: true,
+                  ),
+                  TextField(
+                    controller: keyController,
+                    decoration: const InputDecoration(labelText: 'キー'),
+                  ),
+                  TextField(
+                    controller: tagsController,
+                    decoration: const InputDecoration(
+                      labelText: 'タグ',
+                      hintText: 'カンマ区切り',
+                    ),
+                  ),
+                ],
+              ),
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('取り込む'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true || !context.mounted) {
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('キャンセル'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('取り込む'),
+              ),
+            ],
+          );
+        },
+      );
+      if (confirmed != true || !context.mounted) {
+        return;
+      }
+
+      final titleText = titleController.text.trim();
+      final keyText = keyController.text.trim();
+      title = titleText.isEmpty ? result.files.single.name : titleText;
+      key = keyText.isEmpty ? null : keyText;
+      tags = _parseTags(tagsController.text);
+    } finally {
+      titleController.dispose();
+      keyController.dispose();
+      tagsController.dispose();
+    }
+
+    if (!context.mounted) {
       return;
     }
 
@@ -96,9 +143,9 @@ class LibraryScreen extends ConsumerWidget {
       final importResult = await repository.importScore(
         ImportScoreRequest(
           pdfFile: File(result.files.single.path!),
-          title: titleController.text.trim().isEmpty
-              ? result.files.single.name
-              : titleController.text.trim(),
+          title: title,
+          key: key,
+          tags: tags,
         ),
       );
       if (!context.mounted) {
@@ -115,6 +162,89 @@ class LibraryScreen extends ConsumerWidget {
         SnackBar(content: Text(error.toString())),
       );
     }
+  }
+
+  List<String> _parseTags(String input) {
+    return input
+        .split(',')
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty)
+        .toList(growable: false);
+  }
+}
+
+class _FilterFields extends ConsumerStatefulWidget {
+  const _FilterFields();
+
+  @override
+  ConsumerState<_FilterFields> createState() => _FilterFieldsState();
+}
+
+class _FilterFieldsState extends ConsumerState<_FilterFields> {
+  final _keyController = TextEditingController();
+  final _tagController = TextEditingController();
+
+  @override
+  void dispose() {
+    _keyController.dispose();
+    _tagController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final key = ref.watch(libraryKeyFilterProvider);
+    final tag = ref.watch(libraryTagFilterProvider);
+    final hasFilters = key.trim().isNotEmpty || tag.trim().isNotEmpty;
+    if (_keyController.text != key) {
+      _keyController.text = key;
+    }
+    if (_tagController.text != tag) {
+      _tagController.text = tag;
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _keyController,
+            decoration: const InputDecoration(
+              isDense: true,
+              prefixIcon: Icon(Icons.music_note),
+              labelText: 'キー',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (value) =>
+                ref.read(libraryKeyFilterProvider.notifier).state = value,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: TextField(
+            controller: _tagController,
+            decoration: const InputDecoration(
+              isDense: true,
+              prefixIcon: Icon(Icons.sell),
+              labelText: 'タグ',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (value) =>
+                ref.read(libraryTagFilterProvider.notifier).state = value,
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          tooltip: '絞り込みをクリア',
+          onPressed: hasFilters
+              ? () {
+                  ref.read(libraryKeyFilterProvider.notifier).state = '';
+                  ref.read(libraryTagFilterProvider.notifier).state = '';
+                }
+              : null,
+          icon: const Icon(Icons.filter_alt_off),
+        ),
+      ],
+    );
   }
 }
 
@@ -140,7 +270,7 @@ class _ScoreList extends ConsumerWidget {
                 : Icons.picture_as_pdf,
           ),
           title: Text(item.title),
-          subtitle: Text(item.invalidReason ?? item.key ?? 'PDF'),
+          subtitle: Text(_subtitleFor(item)),
           trailing: PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'delete') {
@@ -155,13 +285,25 @@ class _ScoreList extends ConsumerWidget {
             Navigator.push(
               context,
               MaterialPageRoute<void>(
-                builder: (_) => PdfViewerScreen(scoreId: item.id, title: item.title),
+                builder: (_) =>
+                    PdfViewerScreen(scoreId: item.id, title: item.title),
               ),
             );
           },
         );
       },
     );
+  }
+
+  String _subtitleFor(ScoreListItem item) {
+    if (item.invalidReason != null) {
+      return item.invalidReason!;
+    }
+    final parts = [
+      if (item.key != null && item.key!.isNotEmpty) item.key!,
+      if (item.tags.isNotEmpty) item.tags.join(', '),
+    ];
+    return parts.isEmpty ? 'PDF' : parts.join(' / ');
   }
 }
 
